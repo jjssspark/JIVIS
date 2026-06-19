@@ -23,7 +23,6 @@ _LABEL_MAP = {
     "study_style": "공부 방식",
     "current_project": "현재 프로젝트",
 }
-_MODE_ICONS = {"친구": "👫", "공부코치": "📚", "프로젝트멘토": "💻"}
 
 
 # ── 시스템 프롬프트 ────────────────────────────────────────────
@@ -60,6 +59,9 @@ def _build_system(user_input: str = "") -> str:
 [메타 태그 규칙 - 중요]
 응답 맨 끝에 해당하는 태그만 붙여. 사용자에게 안 보여.
 - 이름 변경: [NAME:이름]
+- 모드 자동 전환: [MODE:친구] 또는 [MODE:공부코치] 또는 [MODE:프로젝트멘토]
+  사용자가 공부/학습 얘기를 하면 [MODE:공부코치], 개발/프로젝트 얘기를 하면 [MODE:프로젝트멘토],
+  일상 대화면 [MODE:친구]. 현재 모드({mode})와 다를 때만 붙여.
 - 새 사실 저장: [MEMORY:key:value]
   사용 가능한 key: goal / hobby / study_style / current_project
   예) [MEMORY:goal:백엔드 개발자] [MEMORY:hobby:독서]
@@ -77,10 +79,17 @@ def _parse_and_update(response: str) -> str:
             "jivis_name": st.session_state["jivis_name"],
         })
 
+    mode_match = re.search(r"\[MODE:([^\]]+)\]", response)
+    if mode_match:
+        new_mode = mode_match.group(1).strip()
+        if new_mode in ("친구", "공부코치", "프로젝트멘토"):
+            st.session_state["mode"] = new_mode
+
     for mem_match in re.finditer(r"\[MEMORY:([^:\]]+):([^\]]+)\]", response):
         save_memory(mem_match.group(1).strip(), mem_match.group(2).strip())
 
     clean = re.sub(r"\s*\[NAME:[^\]]+\]", "", response)
+    clean = re.sub(r"\s*\[MODE:[^\]]+\]", "", clean)
     clean = re.sub(r"\s*\[MEMORY:[^\]]+\]", "", clean)
     return clean.strip()
 
@@ -115,22 +124,6 @@ if "memory_loaded" not in st.session_state:
 with st.sidebar:
     st.title("🤖 JIVIS")
     st.divider()
-
-    selected_mode = st.radio(
-        "JIVIS 모드",
-        ["친구", "공부코치", "프로젝트멘토"],
-        key="mode",
-    )
-    st.caption(f"{_MODE_ICONS[selected_mode]} 현재 모드: {selected_mode}")
-    st.divider()
-
-    long_mem = load_all_memory()
-    user_facts = {k: v for k, v in long_mem.items() if k in _LABEL_MAP}
-    if user_facts:
-        st.caption("📌 기억하고 있어요")
-        for k, v in user_facts.items():
-            st.caption(f"• {_LABEL_MAP[k]}: {v}")
-        st.divider()
 
     if st.button("대화 초기화"):
         st.session_state.messages = []
