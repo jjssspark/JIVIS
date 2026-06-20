@@ -61,6 +61,14 @@ def load_recent_messages(limit: int = 20) -> list[dict]:
     return [{"role": r, "content": c} for r, c in reversed(rows)]
 
 
+def load_last_message_time() -> str | None:
+    with sqlite3.connect(_DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT timestamp FROM conversations ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    return row[0] if row else None
+
+
 def clear_conversations() -> None:
     with sqlite3.connect(_DB_PATH) as conn:
         conn.execute("DELETE FROM conversations")

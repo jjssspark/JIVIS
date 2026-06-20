@@ -5,24 +5,36 @@ from src.ui.chat import Message
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
-def generate_greeting(last_messages: list[Message], system: str = "") -> str:
+def generate_greeting(
+    last_messages: list[Message],
+    system: str = "",
+    elapsed: str = "",
+    current_time: str = "",
+) -> str:
     """이전 대화 맥락을 바탕으로 재접속 인사 생성."""
     history_text = "\n".join(
         f"{'나' if m['role'] == 'user' else 'JIVIS'}: {m['content']}"
         for m in last_messages[-6:]
     )
+    time_info = ""
+    if elapsed:
+        time_info = f"\n- 마지막 대화로부터 {elapsed}이 지났어."
+    if current_time:
+        time_info += f"\n- 지금 시각은 {current_time}이야."
+
     prompt = f"""아래는 이전 대화의 마지막 부분이야:
 
 {history_text}
 
 사용자가 방금 다시 접속했어. 마치 잠깐 자리 비웠다가 돌아온 것처럼, 대화가 끊긴 적 없는 것처럼 자연스럽게 이어줘.
+{time_info}
 
 규칙:
 - 인사말 절대 금지 ("안녕", "반갑", "어서와" 같은 거)
 - 이전 대화 내용이나 분위기를 그대로 이어받아서 반응해
+- 시간 정보가 있으면 자연스럽게 활용해. 예: 3시간 지났고 점심 시간대면 → "밥은 먹고 온 거야?"
 - 예: 밥 먹으러 간다고 했으면 → "밥 맛있게 먹었어?"
 - 예: 뭔가 고민하다 끊겼으면 → "근데 아까 그거 어떻게 됐어?"
-- 예: 게임 얘기 하다 끊겼으면 → "아까 거기서 이긴 거야 결국?"
 - 한두 문장, 그 어투 그대로. 메타 태그 붙이지 마."""
 
     try:

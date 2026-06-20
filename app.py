@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 import streamlit as st
 from src.ui.chat import render_chat, Message
 from src.agents.claude_ai import get_response, generate_greeting
@@ -10,6 +11,7 @@ from src.memory.database import (
     load_all_memory,
     save_message,
     load_recent_messages,
+    load_last_message_time,
     clear_conversations,
 )
 from src.memory.emotion import get_emotion_prompt
@@ -46,9 +48,24 @@ def _build_system(user_input: str = "") -> str:
         if ep:
             emotion_section = f"\n[현재 감정 상태]\n{ep}"
 
+    now = datetime.now()
+    hour = now.hour
+    if 5 <= hour < 12:
+        period = "오전"
+    elif 12 <= hour < 14:
+        period = "점심 시간대"
+    elif 14 <= hour < 18:
+        period = "오후"
+    elif 18 <= hour < 22:
+        period = "저녁"
+    else:
+        period = "밤"
+    time_section = f"\n[현재 시간]\n지금은 {now.strftime('%H:%M')} ({period})이야. 대화 흐름상 자연스러우면 시간대를 반영해도 돼."
+
     return f"""너의 이름은 {jivis}야. {user}의 개인 AI야.
 
 {persona_text}
+{time_section}
 
 [규칙]
 - 자기소개나 인사로 시작하지 마. 바로 자연스럽게 반응해.
@@ -114,7 +131,31 @@ if "memory_loaded" not in st.session_state:
     last_msgs = load_recent_messages(limit=20)
     if last_msgs:
         st.session_state["messages"] = list(last_msgs)
-        greeting = generate_greeting(last_msgs, system=_build_system())
+
+        elapsed_str = ""
+        last_ts = load_last_message_time()
+        if last_ts:
+            try:
+                last_dt = datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")
+                diff = datetime.now() - last_dt
+                total_min = int(diff.total_seconds() / 60)
+                if total_min < 1:
+                    elapsed_str = ""
+                elif total_min < 60:
+                    elapsed_str = f"{total_min}분"
+                else:
+                    h, m = divmod(total_min, 60)
+                    elapsed_str = f"{h}시간" if m == 0 else f"{h}시간 {m}분"
+            except ValueError:
+                pass
+
+        now = datetime.now()
+        greeting = generate_greeting(
+            last_msgs,
+            system=_build_system(),
+            elapsed=elapsed_str,
+            current_time=now.strftime("%H:%M"),
+        )
         if greeting:
             st.session_state["messages"].append(
                 {"role": "assistant", "content": greeting}
