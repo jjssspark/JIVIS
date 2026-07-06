@@ -6,3 +6,5 @@ venv/
 .streamlit/secrets.toml
 memory.json
 assets/
+.DS_Store
+jivis.db
