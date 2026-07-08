@@ -1,8 +1,12 @@
+import time
 import anthropic
 from src.config import ANTHROPIC_API_KEY, MODEL_ID
 from src.ui.chat import Message
 
-_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+_client = anthropic.Anthropic(
+    api_key=ANTHROPIC_API_KEY,
+    timeout=60.0,   # 60초 타임아웃
+)
 
 
 def generate_greeting(
@@ -50,20 +54,27 @@ def generate_greeting(
 
 
 def get_response(user_input: str, history: list[Message], system: str = "") -> str:
-    messages = [{"role": msg["role"], "content": msg["content"]} for msg in history]
+    # 최근 10개만 전달 — 토큰 절약 + 타임아웃 방지
+    messages = [{"role": m["role"], "content": m["content"]} for m in history[-10:]]
     messages.append({"role": "user", "content": user_input})
 
-    try:
-        response = _client.messages.create(
-            model=MODEL_ID,
-            max_tokens=1024,
-            system=system,
-            messages=messages,
-        )
-        return response.content[0].text
-    except anthropic.AuthenticationError:
-        return "⚠️ API 키가 올바르지 않아요. .env 파일의 ANTHROPIC_API_KEY를 확인해주세요."
-    except anthropic.RateLimitError:
-        return "⚠️ 요청이 너무 많아요. 잠시 후 다시 시도해주세요."
-    except Exception as e:
-        return f"⚠️ 오류가 발생했어요: {e}"
+    for attempt in range(2):  # 최대 2회 시도
+        try:
+            response = _client.messages.create(
+                model=MODEL_ID,
+                max_tokens=1024,
+                system=system,
+                messages=messages,
+            )
+            return response.content[0].text
+        except anthropic.APITimeoutError:
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            return "⚠️ 응답 시간이 너무 걸렸어. 다시 말해줘!"
+        except anthropic.AuthenticationError:
+            return "⚠️ API 키가 올바르지 않아. .env 파일의 ANTHROPIC_API_KEY를 확인해줘."
+        except anthropic.RateLimitError:
+            return "⚠️ 요청이 너무 많아. 잠시 후 다시 해줘."
+        except Exception as e:
+            return f"⚠️ 오류가 발생했어요: {e}"

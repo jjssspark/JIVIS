@@ -1,4 +1,6 @@
 import re
+import subprocess
+import sys
 from datetime import datetime
 import streamlit as st
 from src.ui.chat import render_chat, Message
@@ -13,7 +15,20 @@ from src.memory.database import (
     load_recent_messages,
     load_last_message_time,
     clear_conversations,
+    save_note,
+    get_notes,
+    delete_note,
+    save_todo,
+    get_todos,
+    done_todo,
+    delete_todo,
 )
+from src.tools.mac_notes import (
+    create_note as mac_create,
+    update_note as mac_update,
+    delete_note_by_title as mac_delete,
+)
+from src.tools.date_utils import get_date_context
 from src.memory.emotion import get_emotion_prompt
 
 st.set_page_config(page_title="JIVIS", page_icon="🤖", layout="wide")
@@ -60,7 +75,14 @@ def _build_system(user_input: str = "") -> str:
         period = "저녁"
     else:
         period = "밤"
-    time_section = f"\n[현재 시간]\n지금은 {now.strftime('%H:%M')} ({period})이야. 대화 흐름상 자연스러우면 시간대를 반영해도 돼."
+    weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+    weekday = weekdays[now.weekday()]
+    time_section = (
+        f"\n[현재 날짜/시간]\n"
+        f"오늘은 {now.strftime('%Y년 %m월 %d일')} ({weekday}요일), "
+        f"지금은 {now.strftime('%H:%M')} ({period})이야. "
+        f"대화 흐름상 자연스러우면 날짜/시간대를 반영해도 돼."
+    )
 
     return f"""너의 이름은 {jivis}야. {user}의 개인 AI야.
 
@@ -82,7 +104,24 @@ def _build_system(user_input: str = "") -> str:
 - 새 사실 저장: [MEMORY:key:value]
   사용 가능한 key: goal / hobby / study_style / current_project
   예) [MEMORY:goal:백엔드 개발자] [MEMORY:hobby:독서]
+- 메모 저장: [NOTE:제목:내용:날짜] (날짜 없으면 [NOTE:제목:내용])
+  "메모해줘", "기억해줘", "적어줘" 감지 시 붙여.
+  날짜 표현(내일, 다음주 등)이 있으면 아래 날짜 레퍼런스 보고 YYYY-MM-DD로 변환해서 붙여.
+  예) [NOTE:운동:내일 30분 런닝:2026-07-09]
+- 메모 수정: [NOTE_UPDATE:제목:새내용]
+  사용자가 기존 메모를 수정하고 싶다고 하면 붙여.
+  예) [NOTE_UPDATE:운동:내일 1시간 런닝]
+- 할 일 추가: [TODO:내용:날짜] (날짜 없으면 [TODO:내용])
+  "해야 해", "할 일 추가해줘", "~하기로 했어" 감지 시 붙여.
+  날짜 표현이 있으면 YYYY-MM-DD로 변환해서 붙여.
+  예) [TODO:파이썬 공부 2시간:2026-07-09]
+- 할 일 완료: [DONE:id]
+  "완료했어", "다 했어", "끝냈어" 감지 시 해당 id 붙여.
+  예) [DONE:1]
 - 해당 없으면 태그 생략.
+
+[날짜 레퍼런스]
+{get_date_context()}
 """
 
 
@@ -105,15 +144,147 @@ def _parse_and_update(response: str) -> str:
     for mem_match in re.finditer(r"\[MEMORY:([^:\]]+):([^\]]+)\]", response):
         save_memory(mem_match.group(1).strip(), mem_match.group(2).strip())
 
+    for note_match in re.finditer(r"\[NOTE:([^:\]]+):([^:\]]+)(?::([^\]]+))?\]", response):
+        title    = note_match.group(1).strip()
+        body     = note_match.group(2).strip()
+        date_ref = note_match.group(3).strip() if note_match.group(3) else None
+        save_note(title, body, date_ref)
+        label = f"{title}" + (f" ({date_ref})" if date_ref else "")
+        mac_create(label, body)  # macOS 메모앱에도 생성 + 열기
+
+    for upd_match in re.finditer(r"\[NOTE_UPDATE:([^:\]]+):([^\]]+)\]", response):
+        title = upd_match.group(1).strip()
+        new_body = upd_match.group(2).strip()
+        mac_update(title, new_body)  # 메모앱에서 수정 + 열기
+
+    for todo_match in re.finditer(r"\[TODO:([^:\]]+)(?::([^\]]+))?\]", response):
+        task     = todo_match.group(1).strip()
+        due_date = todo_match.group(2).strip() if todo_match.group(2) else None
+        save_todo(task, due_date)
+
+    for done_match in re.finditer(r"\[DONE:(\d+)\]", response):
+        done_todo(int(done_match.group(1)))
+
     clean = re.sub(r"\s*\[NAME:[^\]]+\]", "", response)
     clean = re.sub(r"\s*\[MODE:[^\]]+\]", "", clean)
     clean = re.sub(r"\s*\[MEMORY:[^\]]+\]", "", clean)
+    clean = re.sub(r"\s*\[NOTE:[^\]]+\]", "", clean)
+    clean = re.sub(r"\s*\[NOTE_UPDATE:[^\]]+\]", "", clean)
+    clean = re.sub(r"\s*\[TODO:[^\]]+\]", "", clean)
+    clean = re.sub(r"\s*\[DONE:[^\]]+\]", "", clean)
     return clean.strip()
+
+
+# ── 메모 조회/삭제 처리 ───────────────────────────────────────
+def _handle_note_command(user_input: str) -> str | None:
+    """'메모 보여줘' / '메모 삭제' 같은 명령을 감지해서 직접 처리. 해당 없으면 None."""
+    text = user_input.strip()
+
+    # 메모 조회
+    if any(k in text for k in ("메모 보여", "메모 알려", "메모 목록", "메모 뭐 있어", "메모 뭐있어")):
+        notes = get_notes()
+        if not notes:
+            return "아직 저장된 메모가 없어~"
+        lines = []
+        for n in notes:
+            date_str = f" 📅{n['date_ref']}" if n.get("date_ref") else ""
+            lines.append(f"{n['id']}. [{n['title']}]{date_str} {n['content']}")
+        return "저장된 메모야:\n" + "\n".join(lines)
+
+    # 메모 삭제 — "메모 삭제", "메모 지워줘" + 선택적 제목/id
+    if any(k in text for k in ("메모 삭제", "메모 지워", "메모 없애")):
+        notes = get_notes()
+        if not notes:
+            return "삭제할 메모가 없어!"
+
+        target = None
+
+        # id 숫자 명시 ex) "1번 메모 지워"
+        id_match = re.search(r"(\d+)\s*번", text)
+        if id_match:
+            note_id = int(id_match.group(1))
+            target = next((n for n in notes if n["id"] == note_id), None)
+        else:
+            # 제목 키워드로 찾기
+            for note in notes:
+                if note["title"] in text or note["content"][:10] in text:
+                    target = note
+                    break
+            # 마지막 메모 삭제
+            if not target:
+                target = notes[0]
+
+        delete_note(target["id"])
+        mac_delete(target["title"])  # macOS 메모앱에서도 삭제
+        return f"[{target['title']}] 메모 삭제했어! 메모앱에서도 지웠어."
+
+    return None
+
+
+# ── 할 일 조회/완료/삭제 처리 ────────────────────────────────
+def _handle_todo_command(user_input: str) -> str | None:
+    text = user_input.strip()
+
+    # 할 일 조회 → 네이티브 창 열기
+    if any(k in text for k in ("할 일 보여", "할 일 목록", "할 일 뭐야", "할 일 알려", "해야 할 거", "투두")):
+        # 네이티브 할 일 창 실행 (백그라운드)
+        todo_script = str(__import__("pathlib").Path(__file__).parent / "todo_window.py")
+        subprocess.Popen([sys.executable, todo_script])
+        todos = get_todos(only_pending=True)
+        if not todos:
+            return "할 일 창 열었어~ 지금 할 일 목록은 비어 있어 ㅎ"
+        lines = []
+        for t in todos:
+            date_str = f" 📅{t['due_date']}" if t.get("due_date") else ""
+            lines.append(f"{t['id']}.{date_str} {t['task']}")
+        return "할 일 창 열었어!\n" + "\n".join(lines)
+
+    # 완료 처리 — "1번 완료", "첫 번째 다 했어"
+    if any(k in text for k in ("완료", "다 했어", "끝냈어", "했어")):
+        id_match = re.search(r"(\d+)\s*번", text)
+        if id_match:
+            done_todo(int(id_match.group(1)))
+            return f"{id_match.group(1)}번 할 일 완료 처리했어! 👍"
+        # 번호 없으면 가장 오래된 미완료 항목 완료
+        todos = get_todos(only_pending=True)
+        if todos:
+            done_todo(todos[0]["id"])
+            return f"[{todos[0]['task']}] 완료했어! 고생했다 ㅎㅎ"
+
+    # 삭제
+    if any(k in text for k in ("할 일 삭제", "할 일 지워", "투두 삭제", "투두 지워")):
+        id_match = re.search(r"(\d+)\s*번", text)
+        todos = get_todos(only_pending=False)
+        if not todos:
+            return "삭제할 할 일이 없어!"
+        if id_match:
+            todo_id = int(id_match.group(1))
+            target = next((t for t in todos if t["id"] == todo_id), None)
+        else:
+            target = todos[0]
+        if target:
+            delete_todo(target["id"])
+            return f"[{target['task']}] 할 일 삭제했어."
+
+    return None
 
 
 # ── 대화 처리 ─────────────────────────────────────────────────
 def responder(user_input: str, history: list[Message]) -> str:
     save_message("user", user_input)
+
+    # 메모 명령어 우선 처리
+    note_reply = _handle_note_command(user_input)
+    if note_reply:
+        save_message("assistant", note_reply)
+        return note_reply
+
+    # 할 일 명령어 처리
+    todo_reply = _handle_todo_command(user_input)
+    if todo_reply:
+        save_message("assistant", todo_reply)
+        return todo_reply
+
     raw = get_response(user_input, history, system=_build_system(user_input))
     reply = _parse_and_update(raw)
     save_message("assistant", reply)

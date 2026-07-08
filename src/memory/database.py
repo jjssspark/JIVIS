@@ -25,9 +25,28 @@ def init_db() -> None:
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 title     TEXT NOT NULL,
                 content   TEXT NOT NULL,
+                date_ref  TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS todos (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                task       TEXT NOT NULL,
+                done       INTEGER DEFAULT 0,
+                due_date   TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # 기존 DB에 컬럼 없으면 추가 (마이그레이션)
+        try:
+            conn.execute("ALTER TABLE notes ADD COLUMN date_ref TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE todos ADD COLUMN due_date TEXT")
+        except Exception:
+            pass
 
 
 def save_memory(key: str, value: str) -> None:
@@ -82,20 +101,54 @@ def clear_conversations() -> None:
         conn.execute("DELETE FROM conversations")
 
 
-def save_note(title: str, content: str) -> None: # 메모 넣는 도구
-    with sqlite3.connect(_DB_PATH) as conn: # 서랍장 문을 열고, 끝나면 자동으로 닫아준다. 이거 빼먹으면 연결계속 쌓여서 앱이 느려지거나 파일이 잠기는 버그
+def save_note(title: str, content: str, date_ref: str | None = None) -> None:
+    with sqlite3.connect(_DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO notes (title, content) VALUES (?, ?)",
-            (title, content), # 보안사고 방지를 위한 SQL 인젝션 방지 코드
+            "INSERT INTO notes (title, content, date_ref) VALUES (?, ?, ?)",
+            (title, content, date_ref),
         )
 
 
-def get_notes() -> list[dict]: # 꺼내는 도구
+def get_notes() -> list[dict]:
     with sqlite3.connect(_DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT id, title, content, timestamp FROM notes ORDER BY id DESC" # 최신 메모가 제일 위로 오게
+            "SELECT id, title, content, date_ref, timestamp FROM notes ORDER BY id DESC"
         ).fetchall()
     return [
-        {"id": r[0], "title": r[1], "content": r[2], "timestamp": r[3]} # 결과를 딕셔너리 리스트 형태로 바꿔주는 이유 : 나중에 UI에 뿌리거나, API로 다른 프로그램에 보낼 때 이 형태가 제일 다루기 쉬움
+        {"id": r[0], "title": r[1], "content": r[2], "date_ref": r[3], "timestamp": r[4]}
         for r in rows
     ]
+
+
+def delete_note(note_id: int) -> None:
+    with sqlite3.connect(_DB_PATH) as conn:
+        conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+
+
+# ── 할 일 (todos) ─────────────────────────────────────────────
+def save_todo(task: str, due_date: str | None = None) -> None:
+    with sqlite3.connect(_DB_PATH) as conn:
+        conn.execute("INSERT INTO todos (task, due_date) VALUES (?, ?)", (task, due_date))
+
+
+def get_todos(only_pending: bool = True) -> list[dict]:
+    with sqlite3.connect(_DB_PATH) as conn:
+        if only_pending:
+            rows = conn.execute(
+                "SELECT id, task, done, due_date, created_at FROM todos WHERE done = 0 ORDER BY due_date ASC, id ASC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, task, done, due_date, created_at FROM todos ORDER BY due_date ASC, id ASC"
+            ).fetchall()
+    return [{"id": r[0], "task": r[1], "done": bool(r[2]), "due_date": r[3], "created_at": r[4]} for r in rows]
+
+
+def done_todo(todo_id: int) -> None:
+    with sqlite3.connect(_DB_PATH) as conn:
+        conn.execute("UPDATE todos SET done = 1 WHERE id = ?", (todo_id,))
+
+
+def delete_todo(todo_id: int) -> None:
+    with sqlite3.connect(_DB_PATH) as conn:
+        conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
