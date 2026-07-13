@@ -22,6 +22,9 @@ from src.memory.database import (
     get_todos,
     done_todo,
     delete_todo,
+    clear_done_todos,
+    get_overdue_todos,
+    get_today_todos,
 )
 from src.tools.mac_notes import (
     create_note as mac_create,
@@ -84,6 +87,39 @@ def _build_system(user_input: str = "") -> str:
         f"대화 흐름상 자연스러우면 날짜/시간대를 반영해도 돼."
     )
 
+    # 할 일 컨텍스트 (전체 미완료 목록 + 기한 초과)
+    todo_section = ""
+    all_pending = get_todos(only_pending=True)
+    overdue = get_overdue_todos()
+    if all_pending:
+        items = "\n".join(f"- [id:{t['id']}] {t['task']}" + (f" (마감:{t['due_date']})" if t.get("due_date") else "") for t in all_pending)
+        todo_section += f"\n[현재 저장된 미완료 할 일 — 절대 [TODO:] 태그로 다시 추가하지 마]\n{items}"
+    if overdue:
+        items = ", ".join(f"{t['task']}({t['due_date']})" for t in overdue)
+        todo_section += f"\n[기한 초과 할 일 ⚠️]\n{items}"
+    if todo_section:
+        todo_section += "\n대화 흐름상 자연스러우면 할 일을 가볍게 언급해도 돼. 단, 이미 있는 항목은 절대 [TODO:]로 재추가 금지."
+
+    # 공부 플래너 섹션
+    study_section = ""
+    study_keys = {k: long_mem[k] for k in ("goal", "study_style", "current_project") if k in long_mem}
+    if study_keys:
+        lines = []
+        if "goal" in study_keys:
+            lines.append(f"- 목표: {study_keys['goal']}")
+        if "study_style" in study_keys:
+            lines.append(f"- 공부 방식: {study_keys['study_style']}")
+        if "current_project" in study_keys:
+            lines.append(f"- 현재 프로젝트: {study_keys['current_project']}")
+        study_section = (
+            "\n[공부 플래너]\n"
+            + "\n".join(lines)
+            + "\n사용자가 '오늘 뭐 공부해?', '공부 추천', '뭐 할까?' 등을 물으면"
+            " 위 정보 기반으로 오늘 할 구체적인 학습 항목 2~3개를 추천해."
+            " 추천 후 '할 일에 추가할까?' 라고 물어봐."
+            " 사용자가 원하면 [TODO:학습내용:오늘날짜] 태그로 추가해."
+        )
+
     return f"""너의 이름은 {jivis}야. {user}의 개인 AI야.
 
 {persona_text}
@@ -93,7 +129,7 @@ def _build_system(user_input: str = "") -> str:
 - 자기소개나 인사로 시작하지 마. 바로 자연스럽게 반응해.
 - 사용자가 이름을 알려주거나 정정하면, 그 이름으로 바로 불러줘.
 - 사용자의 목표, 취미, 공부 방식, 현재 프로젝트를 언급하면 기억해.
-{memory_section}{emotion_section}
+{memory_section}{emotion_section}{todo_section}{study_section}
 
 [메타 태그 규칙 - 중요]
 응답 맨 끝에 해당하는 태그만 붙여. 사용자에게 안 보여.
@@ -221,15 +257,33 @@ def _handle_note_command(user_input: str) -> str | None:
     return None
 
 
+# ── 공부 플래너 처리 ──────────────────────────────────────────
+def _handle_study_command(user_input: str) -> str | None:
+    """공부 추천 명령 감지 — 메모리 없으면 먼저 알려줌."""
+    text = user_input.strip()
+    if not any(k in text for k in ("공부", "학습", "뭐 할까", "뭐 배울", "오늘 계획")):
+        return None
+    if not any(k in text for k in ("추천", "뭐", "어떤", "계획", "할까")):
+        return None
+
+    mem = load_all_memory()
+    missing = [k for k in ("goal", "study_style") if k not in mem]
+    if missing:
+        labels = {"goal": "목표", "study_style": "공부 방식"}
+        missing_str = ", ".join(labels[k] for k in missing)
+        return (
+            f"맞춤 추천을 하려면 네 {missing_str}을 알아야 해!\n"
+            f"예) '내 목표는 백엔드 개발자야', '나는 짧게 집중하는 스타일이야' 라고 알려줘."
+        )
+    return None  # 메모리 있으면 Claude가 system prompt 기반으로 처리
+
+
 # ── 할 일 조회/완료/삭제 처리 ────────────────────────────────
 def _handle_todo_command(user_input: str) -> str | None:
-    text = user_input.strip()
+    text = user_input.strip().replace("할일", "할 일")  # 붙여쓰기 정규화
 
-    # 할 일 조회 → 네이티브 창 열기
+    # 할 일 조회
     if any(k in text for k in ("할 일 보여", "할 일 목록", "할 일 뭐야", "할 일 알려", "해야 할 거", "투두")):
-        # 네이티브 할 일 창 실행 (백그라운드)
-        todo_script = str(__import__("pathlib").Path(__file__).parent / "todo_window.py")
-        subprocess.Popen([sys.executable, todo_script])
         todos = get_todos(only_pending=True)
         if not todos:
             return "할 일 창 열었어~ 지금 할 일 목록은 비어 있어 ㅎ"
@@ -239,26 +293,48 @@ def _handle_todo_command(user_input: str) -> str | None:
             lines.append(f"{t['id']}.{date_str} {t['task']}")
         return "할 일 창 열었어!\n" + "\n".join(lines)
 
-    # 완료 처리 — "1번 완료", "첫 번째 다 했어"
-    if any(k in text for k in ("완료", "다 했어", "끝냈어", "했어")):
-        id_match = re.search(r"(\d+)\s*번", text)
-        if id_match:
-            done_todo(int(id_match.group(1)))
-            return f"{id_match.group(1)}번 할 일 완료 처리했어! 👍"
-        # 번호 없으면 가장 오래된 미완료 항목 완료
-        todos = get_todos(only_pending=True)
-        if todos:
-            done_todo(todos[0]["id"])
-            return f"[{todos[0]['task']}] 완료했어! 고생했다 ㅎㅎ"
+    # 완료된 것 전부 삭제 (← "완료" 체크보다 먼저)
+    _clear_keywords = ("완료된 거 삭제", "완료된 것 삭제", "완료 삭제", "다 한 거 지워", "완료된 거 지워",
+                       "완료된거 삭제", "완료된거 지워", "완료된거 없애", "완료된 거 없애",
+                       "완료된 것 없애", "완료된 것들 없애", "완료된 것들 삭제", "완료된 것들 지워",
+                       "다 없애", "전부 없애", "전부 삭제", "전부 지워")
+    # "완료" + ("없애"/"지워"/"삭제") 조합도 감지
+    _has_clear = any(k in text for k in _clear_keywords)
+    _has_clear = _has_clear or ("완료" in text and any(k in text for k in ("없애", "지워", "삭제", "치워")))
+    if _has_clear:
+        count = clear_done_todos()
+        return f"완료된 할 일 {count}개 전부 삭제했어!"
 
-    # 삭제
+    # 완료된 할 일 보기 (← "완료" 체크보다 먼저)
+    if any(k in text for k in ("완료된 할 일", "완료 목록", "다 한 거", "다 한 것")):
+        done_list = [t for t in get_todos(only_pending=False) if t["done"]]
+        if not done_list:
+            return "아직 완료된 할 일이 없어!"
+        lines = [f"✅ {t['task']}" + (f" (📅{t['due_date']})" if t.get("due_date") else "") for t in done_list]
+        return "완료된 할 일이야:\n" + "\n".join(lines)
+
+    # 기한 초과 확인
+    if any(k in text for k in ("기한 지난", "마감 지난", "오버듀", "밀린 할 일")):
+        overdue = get_overdue_todos()
+        if not overdue:
+            return "기한 지난 할 일 없어~ 잘하고 있는 거야 👍"
+        lines = [f"⚠️ {t['task']} (마감: {t['due_date']})" for t in overdue]
+        return "기한 지난 할 일이야:\n" + "\n".join(lines)
+
+    # 완료 처리 — 반드시 번호 명시 필요 ("1번 완료", "2번 다 했어")
+    id_match = re.search(r"(\d+)\s*번", text)
+    if id_match and any(k in text for k in ("완료", "다 했어", "끝냈어", "했어")):
+        done_todo(int(id_match.group(1)))
+        return f"{id_match.group(1)}번 할 일 완료 처리했어! 👍"
+
+    # 개별 삭제
     if any(k in text for k in ("할 일 삭제", "할 일 지워", "투두 삭제", "투두 지워")):
-        id_match = re.search(r"(\d+)\s*번", text)
         todos = get_todos(only_pending=False)
         if not todos:
             return "삭제할 할 일이 없어!"
-        if id_match:
-            todo_id = int(id_match.group(1))
+        id_match2 = re.search(r"(\d+)\s*번", text)
+        if id_match2:
+            todo_id = int(id_match2.group(1))
             target = next((t for t in todos if t["id"] == todo_id), None)
         else:
             target = todos[0]
@@ -269,15 +345,39 @@ def _handle_todo_command(user_input: str) -> str | None:
     return None
 
 
+_TODO_KEYWORDS = (
+    "할 일", "할일", "투두", "todo", "해야", "마감", "기한",
+    "완료", "끝냈어", "다 했어", "추가해", "삭제해", "지워", "없애",
+)
+
+def _open_todo_window() -> None:
+    """이미 실행 중이면 띄우지 않음."""
+    already = subprocess.run(["pgrep", "-f", "todo_window.py"], capture_output=True)
+    if already.returncode != 0:  # 실행 중인 프로세스 없을 때만
+        todo_script = str(__import__("pathlib").Path(__file__).parent / "todo_window.py")
+        subprocess.Popen([sys.executable, todo_script])
+
+
 # ── 대화 처리 ─────────────────────────────────────────────────
 def responder(user_input: str, history: list[Message]) -> str:
     save_message("user", user_input)
+
+    # 공부 플래너 — 메모리 없으면 먼저 안내
+    study_reply = _handle_study_command(user_input)
+    if study_reply:
+        save_message("assistant", study_reply)
+        return study_reply
 
     # 메모 명령어 우선 처리
     note_reply = _handle_note_command(user_input)
     if note_reply:
         save_message("assistant", note_reply)
         return note_reply
+
+    # 할 일 관련 키워드 감지 → 앱 자동 오픈 (할 일 명령 처리 전에)
+    normalized = user_input.replace("할일", "할 일")
+    if any(k in normalized for k in _TODO_KEYWORDS):
+        _open_todo_window()
 
     # 할 일 명령어 처리
     todo_reply = _handle_todo_command(user_input)
@@ -287,6 +387,9 @@ def responder(user_input: str, history: list[Message]) -> str:
 
     raw = get_response(user_input, history, system=_build_system(user_input))
     reply = _parse_and_update(raw)
+    # AI 응답에 [TODO:] 또는 [DONE:] 태그 있으면 창 열기
+    if "[TODO:" in raw or "[DONE:" in raw:
+        _open_todo_window()
     save_message("assistant", reply)
     return reply
 

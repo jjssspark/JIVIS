@@ -406,8 +406,27 @@ function makeTodoItem(t) {
   return li;
 }
 
+// DB 폴링으로 외부 변경 자동 감지
+let _pollHash = '';
+function _hash(todos) {
+  return JSON.stringify(todos.map(t => `${t.id}:${t.done}:${t.task}:${t.due_date}`));
+}
+async function _poll() {
+  try {
+    const latest = await pywebview.api.get_todos();
+    const h = _hash(latest);
+    if (h !== _pollHash) {
+      _pollHash = h;
+      allTodos = latest;
+      buildTabs(allTodos);
+      renderList(allTodos);
+    }
+  } catch(e) {}
+}
+
 async function refresh() {
   allTodos = await pywebview.api.get_todos();
+  _pollHash = _hash(allTodos);
   buildTabs(allTodos);
   renderList(allTodos);
 }
@@ -432,7 +451,10 @@ function jumpToDate() {
 document.getElementById('dateInput').value = today();
 document.getElementById('jumpDate').value = today();
 
-window.addEventListener('pywebviewready', refresh);
+window.addEventListener('pywebviewready', () => {
+  refresh();
+  setInterval(_poll, 2000); // 2초마다 DB 변경 감지
+});
 </script>
 </body>
 </html>

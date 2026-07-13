@@ -128,7 +128,13 @@ def delete_note(note_id: int) -> None:
 # ── 할 일 (todos) ─────────────────────────────────────────────
 def save_todo(task: str, due_date: str | None = None) -> None:
     with sqlite3.connect(_DB_PATH) as conn:
-        conn.execute("INSERT INTO todos (task, due_date) VALUES (?, ?)", (task, due_date))
+        # 같은 task가 이미 미완료 상태로 있으면 중복 추가 안 함
+        exists = conn.execute(
+            "SELECT 1 FROM todos WHERE task = ? AND done = 0",
+            (task,),
+        ).fetchone()
+        if not exists:
+            conn.execute("INSERT INTO todos (task, due_date) VALUES (?, ?)", (task, due_date))
 
 
 def get_todos(only_pending: bool = True) -> list[dict]:
@@ -152,3 +158,34 @@ def done_todo(todo_id: int) -> None:
 def delete_todo(todo_id: int) -> None:
     with sqlite3.connect(_DB_PATH) as conn:
         conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+
+
+def clear_done_todos() -> int:
+    """완료된 할 일 전부 삭제. 삭제된 개수 반환."""
+    with sqlite3.connect(_DB_PATH) as conn:
+        cur = conn.execute("DELETE FROM todos WHERE done = 1")
+        return cur.rowcount
+
+
+def get_overdue_todos() -> list[dict]:
+    """오늘 날짜보다 이전 due_date인 미완료 할 일."""
+    from datetime import date
+    today = str(date.today())
+    with sqlite3.connect(_DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, task, due_date FROM todos WHERE done = 0 AND due_date IS NOT NULL AND due_date < ?",
+            (today,),
+        ).fetchall()
+    return [{"id": r[0], "task": r[1], "due_date": r[2]} for r in rows]
+
+
+def get_today_todos() -> list[dict]:
+    """오늘 마감 미완료 할 일."""
+    from datetime import date
+    today = str(date.today())
+    with sqlite3.connect(_DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, task FROM todos WHERE done = 0 AND due_date = ?",
+            (today,),
+        ).fetchall()
+    return [{"id": r[0], "task": r[1]} for r in rows]
