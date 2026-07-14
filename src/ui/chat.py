@@ -13,6 +13,19 @@ _CSS = """
 section[data-testid="stSidebar"] {
     background-color: #1e1e2e !important;
 }
+/* 사이드바 텍스트 — 다크 배경 위에서 안 보이던 문제 수정 */
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    color: #f5f5f5 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] svg,
+section[data-testid="stSidebar"] [data-testid="collapsedControl"] svg {
+    fill: #f5f5f5 !important;
+}
 
 /* 헤더 투명하게 */
 header[data-testid="stHeader"] {
