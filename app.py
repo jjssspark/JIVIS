@@ -1,12 +1,14 @@
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 import streamlit as st
 from src.ui.chat import render_chat, Message
 from src.agents.claude_ai import get_response, generate_greeting
 from src.agents.persona import get_persona_prompt
 from src.memory.memory import load, save
+from src.tools.pdf_reader import extract_text, chunk_text
 from src.memory.database import (
     init_db,
     save_memory,
@@ -65,6 +67,15 @@ def _build_system(user_input: str = "") -> str:
         ep = get_emotion_prompt(user_input)
         if ep:
             emotion_section = f"\n[현재 감정 상태]\n{ep}"
+
+    pdf_section = ""
+    if st.session_state.get("pdf_context"):
+        pdf_name = st.session_state.get("pdf_filename", "업로드된 PDF")
+        pdf_section = (
+            f"\n[현재 PDF 보고 있어]\n"
+            f"사용자가 '{pdf_name}' 파일을 업로드해서 같이 보고 있어."
+            " PDF 내용 요약이나 질의응답은 아직 준비 중이니, 관련 질문이 오면 곧 지원 예정이라고 답해줘."
+        )
 
     now = datetime.now()
     hour = now.hour
@@ -129,7 +140,7 @@ def _build_system(user_input: str = "") -> str:
 - 자기소개나 인사로 시작하지 마. 바로 자연스럽게 반응해.
 - 사용자가 이름을 알려주거나 정정하면, 그 이름으로 바로 불러줘.
 - 사용자의 목표, 취미, 공부 방식, 현재 프로젝트를 언급하면 기억해.
-{memory_section}{emotion_section}{todo_section}{study_section}
+{memory_section}{emotion_section}{pdf_section}{todo_section}{study_section}
 
 [메타 태그 규칙 - 중요]
 응답 맨 끝에 해당하는 태그만 붙여. 사용자에게 안 보여.
@@ -438,6 +449,19 @@ if "memory_loaded" not in st.session_state:
 # ── 사이드바 ───────────────────────────────────────────────────
 with st.sidebar:
     st.title("🤖 JIVIS")
+    st.divider()
+
+    uploaded_pdf = st.file_uploader("PDF 업로드", type=["pdf"])
+    if uploaded_pdf is not None:
+        if st.session_state.get("pdf_filename") != uploaded_pdf.name:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                f.write(uploaded_pdf.read())
+                tmp_path = f.name
+            text = extract_text(tmp_path)
+            st.session_state["pdf_context"] = chunk_text(text)
+            st.session_state["pdf_filename"] = uploaded_pdf.name
+        st.success(f"{uploaded_pdf.name} · {len(st.session_state['pdf_context'])}청크 저장됨")
+
     st.divider()
 
     if st.button("대화 초기화"):
