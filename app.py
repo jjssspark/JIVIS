@@ -69,13 +69,25 @@ def _build_system(user_input: str = "") -> str:
             emotion_section = f"\n[현재 감정 상태]\n{ep}"
 
     pdf_section = ""
-    if st.session_state.get("pdf_context"):
-        pdf_name = st.session_state.get("pdf_filename", "업로드된 PDF")
-        pdf_section = (
-            f"\n[현재 PDF 보고 있어]\n"
-            f"사용자가 '{pdf_name}' 파일을 업로드해서 같이 보고 있어."
-            " PDF 내용 요약이나 질의응답은 아직 준비 중이니, 관련 질문이 오면 곧 지원 예정이라고 답해줘."
-        )
+    if st.session_state.get("pdf_filename"):
+        pdf_name = st.session_state["pdf_filename"]
+        chunk_count = len(st.session_state.get("pdf_context") or [])
+        if chunk_count > 0:
+            pdf_section = (
+                f"\n[현재 PDF 보고 있어]\n"
+                f"사용자가 '{pdf_name}' 파일을 이미 업로드했고, 시스템이 정상적으로 받아서 {chunk_count}개 조각으로 저장해뒀어."
+                " 이건 확정된 사실이니 '파일을 못 받았다', '화면에 안 보인다', '다시 보내달라'는 식으로 절대 말하지 마."
+                " 다만 파일 내용을 실제로 읽고 요약하거나 질문에 답하는 기능은 아직 개발 중이라,"
+                " 관련 질문이 오면 '파일은 잘 받았는데 내용 요약 기능은 아직 준비 중이야'라고 정확히 안내해."
+            )
+        else:
+            pdf_section = (
+                f"\n[현재 PDF 보고 있어]\n"
+                f"사용자가 '{pdf_name}' 파일을 업로드했고 시스템이 파일 자체는 받았는데,"
+                " 텍스트 추출에 실패했어(스캔 이미지 PDF이거나 글자가 그림으로 되어 있을 가능성이 커)."
+                " '파일을 못 받았다'고 말하지 말고, '파일은 받았는데 텍스트 추출이 안 됐다,"
+                " 스캔본이면 이미지라서 글자를 못 읽는다'고 정확히 설명해."
+            )
 
     now = datetime.now()
     hour = now.hour
@@ -460,7 +472,11 @@ with st.sidebar:
             text = extract_text(tmp_path)
             st.session_state["pdf_context"] = chunk_text(text)
             st.session_state["pdf_filename"] = uploaded_pdf.name
-        st.success(f"{uploaded_pdf.name} · {len(st.session_state['pdf_context'])}청크 저장됨")
+        chunk_count = len(st.session_state["pdf_context"])
+        if chunk_count > 0:
+            st.success(f"{uploaded_pdf.name} · {chunk_count}청크 저장됨")
+        else:
+            st.warning(f"{uploaded_pdf.name}에서 텍스트를 추출하지 못했어요. 스캔 이미지 PDF일 수 있어요.")
 
     st.divider()
 
