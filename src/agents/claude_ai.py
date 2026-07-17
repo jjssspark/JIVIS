@@ -8,6 +8,8 @@ _client = anthropic.Anthropic(
     timeout=60.0,   # 60초 타임아웃
 )
 
+PDF_SUMMARY_CHAR_LIMIT = 12000  # 대형 PDF도 토큰 초과/타임아웃 없이 요약하기 위한 상한
+
 
 def generate_greeting(
     last_messages: list[Message],
@@ -51,6 +53,29 @@ def generate_greeting(
         return response.content[0].text
     except Exception:
         return None
+
+
+def summarize_pdf(chunks: list[str], persona: str = "") -> str:
+    """PDF 텍스트 청크를 Claude에 전달해 3~5줄 요약을 생성한다."""
+    text = "\n".join(chunks)[:PDF_SUMMARY_CHAR_LIMIT]
+    prompt = f"""아래는 PDF에서 추출한 텍스트야:
+
+{text}
+
+이 내용을 핵심만 3~5줄로 요약해줘. 한 줄에 한 문장씩, 줄바꿈으로 구분해서 답해. 다른 설명 없이 요약만 답해."""
+
+    try:
+        response = _client.messages.create(
+            model=MODEL_ID,
+            max_tokens=500,
+            system=persona,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
+    except anthropic.APITimeoutError:
+        return "⚠️ 요약 중 응답 시간이 너무 걸렸어. 다시 시도해줘!"
+    except Exception as e:
+        return f"⚠️ 요약 중 오류가 발생했어요: {e}"
 
 
 def get_response(user_input: str, history: list[Message], system: str = "") -> str:
