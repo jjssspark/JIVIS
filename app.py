@@ -5,10 +5,11 @@ import tempfile
 from datetime import datetime
 import streamlit as st
 from src.ui.chat import render_chat, Message
-from src.agents.claude_ai import get_response, generate_greeting
+from src.agents.claude_ai import get_response, generate_greeting, summarize_pdf
 from src.agents.persona import get_persona_prompt
 from src.memory.memory import load, save
 from src.tools.pdf_reader import extract_text, chunk_text
+from src.tools.file_search import search_files
 from src.memory.database import (
     init_db,
     save_memory,
@@ -38,6 +39,8 @@ from src.memory.emotion import get_emotion_prompt
 
 st.set_page_config(page_title="JIVIS", page_icon="🤖", layout="wide")
 init_db()
+
+_PDF_QA_CHAR_LIMIT = 8000  # 시스템 프롬프트에 주입할 PDF 내용 상한 (토큰 절약)
 
 _LABEL_MAP = {
     "goal": "목표",
@@ -71,14 +74,14 @@ def _build_system(user_input: str = "") -> str:
     pdf_section = ""
     if st.session_state.get("pdf_filename"):
         pdf_name = st.session_state["pdf_filename"]
-        chunk_count = len(st.session_state.get("pdf_context") or [])
+        pdf_chunks = st.session_state.get("pdf_context") or []
+        chunk_count = len(pdf_chunks)
         if chunk_count > 0:
+            preview = "\n".join(pdf_chunks)[:_PDF_QA_CHAR_LIMIT]
             pdf_section = (
-                f"\n[현재 PDF 보고 있어]\n"
-                f"사용자가 '{pdf_name}' 파일을 이미 업로드했고, 시스템이 정상적으로 받아서 {chunk_count}개 조각으로 저장해뒀어."
-                " 이건 확정된 사실이니 '파일을 못 받았다', '화면에 안 보인다', '다시 보내달라'는 식으로 절대 말하지 마."
-                " 다만 파일 내용을 실제로 읽고 요약하거나 질문에 답하는 기능은 아직 개발 중이라,"
-                " 관련 질문이 오면 '파일은 잘 받았는데 내용 요약 기능은 아직 준비 중이야'라고 정확히 안내해."
+                f"\n[현재 PDF 내용 — '{pdf_name}'에서 추출한 텍스트]\n{preview}\n"
+                "위 내용은 사용자가 업로드한 PDF에서 실제로 추출한 텍스트야."
+                " 사용자가 이 PDF 내용에 대해 질문하면 위 텍스트를 근거로 답해."
             )
         else:
             pdf_section = (
@@ -280,6 +283,34 @@ def _handle_note_command(user_input: str) -> str | None:
     return None
 
 
+# ── PDF 요약 처리 ─────────────────────────────────────────────
+def _handle_pdf_command(user_input: str) -> str | None:
+    """'PDF 요약해줘' 같은 요약 명령을 감지해서 summarize_pdf 호출. 해당 없으면 None."""
+    if "요약" not in user_input.strip():
+        return None
+    pdf_chunks = st.session_state.get("pdf_context")
+    if not pdf_chunks:
+        return None  # PDF 없으면 일반 대화로 넘겨서 자연스럽게 안내
+    persona = get_persona_prompt(st.session_state.get("mode", "친구"), st.session_state["user_name"])
+    return summarize_pdf(pdf_chunks, persona=persona)
+
+
+# ── 파일 검색 처리 ─────────────────────────────────────────────
+def _handle_file_search_command(user_input: str) -> str | None:
+    """'OO 파일 찾아줘/검색해줘' 명령을 감지해서 documents 폴더에서 검색. 해당 없으면 None."""
+    match = re.search(r"(.+?)\s*파일\s*(?:찾아|검색해)", user_input.strip())
+    if not match:
+        return None
+    query = match.group(1).strip()
+    if not query:
+        return None
+    results = search_files(query)
+    if not results:
+        return f"'{query}' 관련 파일을 documents 폴더에서 못 찾았어."
+    lines = "\n".join(f"- {name}" for name in results)
+    return f"'{query}' 검색 결과:\n{lines}"
+
+
 # ── 공부 플래너 처리 ──────────────────────────────────────────
 def _handle_study_command(user_input: str) -> str | None:
     """공부 추천 명령 감지 — 메모리 없으면 먼저 알려줌."""
@@ -397,6 +428,18 @@ def responder(user_input: str, history: list[Message]) -> str:
         save_message("assistant", note_reply)
         return note_reply
 
+    # PDF 요약 명령어 처리
+    pdf_reply = _handle_pdf_command(user_input)
+    if pdf_reply:
+        save_message("assistant", pdf_reply)
+        return pdf_reply
+
+    # 파일 검색 명령어 처리
+    file_reply = _handle_file_search_command(user_input)
+    if file_reply:
+        save_message("assistant", file_reply)
+        return file_reply
+
     # 할 일 관련 키워드 감지 → 앱 자동 오픈 (할 일 명령 처리 전에)
     normalized = user_input.replace("할일", "할 일")
     if any(k in normalized for k in _TODO_KEYWORDS):
@@ -482,6 +525,8 @@ with st.sidebar:
 
     if st.button("대화 초기화"):
         st.session_state.messages = []
+        st.session_state.pop("pdf_context", None)
+        st.session_state.pop("pdf_filename", None)
         clear_conversations()
         st.rerun()
 
