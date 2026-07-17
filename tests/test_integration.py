@@ -55,7 +55,7 @@ def test_pdf_extract_chunk_and_search_documents_pipeline(tmp_path):
     assert len(chunks) > 0
 
     (tmp_path / "sample.pdf").write_bytes(b"x")
-    assert search_files("sample", base_dir=tmp_path) == ["sample.pdf"]
+    assert search_files("sample", base_dir=tmp_path) == [str(tmp_path / "sample.pdf")]
 
 
 @patch("src.agents.claude_ai._client")

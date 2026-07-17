@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime
+from pathlib import Path
 import streamlit as st
 from src.ui.chat import render_chat, Message
 from src.agents.claude_ai import get_response, generate_greeting, summarize_pdf
@@ -296,8 +297,10 @@ def _handle_pdf_command(user_input: str) -> str | None:
 
 
 # ── 파일 검색 처리 ─────────────────────────────────────────────
+_MAX_FILE_SEARCH_RESULTS = 20  # 홈 디렉터리 전체 검색이라 결과가 많을 수 있어 상한 설정
+
 def _handle_file_search_command(user_input: str) -> str | None:
-    """'OO 파일 찾아줘/검색해줘' 명령을 감지해서 documents 폴더에서 검색. 해당 없으면 None."""
+    """'OO 파일 찾아줘/검색해줘' 명령을 감지해서 로컬 파일 시스템에서 검색. 해당 없으면 None."""
     match = re.search(r"(.+?)\s*파일\s*(?:찾아|검색해)", user_input.strip())
     if not match:
         return None
@@ -306,9 +309,13 @@ def _handle_file_search_command(user_input: str) -> str | None:
         return None
     results = search_files(query)
     if not results:
-        return f"'{query}' 관련 파일을 documents 폴더에서 못 찾았어."
-    lines = "\n".join(f"- {name}" for name in results)
-    return f"'{query}' 검색 결과:\n{lines}"
+        return f"'{query}' 관련 파일을 못 찾았어."
+    home = str(Path.home())
+    shown = [p.replace(home, "~") for p in results[:_MAX_FILE_SEARCH_RESULTS]]
+    lines = "\n".join(f"- {p}" for p in shown)
+    more = len(results) - len(shown)
+    suffix = f"\n...외 {more}개 더 있어" if more > 0 else ""
+    return f"'{query}' 검색 결과 ({len(results)}개):\n{lines}{suffix}"
 
 
 # ── 공부 플래너 처리 ──────────────────────────────────────────
