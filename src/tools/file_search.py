@@ -18,6 +18,9 @@ _EXTENSION_ALIASES = {
 
 _KNOWN_EXTENSIONS = {"py", "pdf", "docx", "xlsx", "csv", "txt", "png", "jpg", "jpeg", "md"}
 
+# 정확한 파일명이 아니라 구어체로 물어볼 때 의미 없는 토큰 (검색어에서 제외)
+_FILLER_TOKENS = {"같은거", "같은", "비슷한거", "비슷한", "관련", "그런거", "이런거", "저런거", "거"}
+
 # 홈 디렉터리 전체를 훑을 때 시간이 오래 걸리거나 의미 없는 결과만 나오는 폴더 제외
 _SKIP_DIR_NAMES = {
     "Library", "Applications", "System", "Public",
@@ -44,16 +47,27 @@ def _iter_files(base_dir: Path):
 
 
 def search_files(query: str, base_dir: Path = HOME_DIR) -> list[str]:
-    """base_dir(기본값: 홈 디렉터리) 아래에서 파일명 또는 확장자로 파일을 검색해 전체 경로 목록을 반환한다."""
+    """base_dir(기본값: 홈 디렉터리) 아래에서 파일명 또는 확장자로 파일을 검색해 전체 경로 목록을 반환한다.
+    검색어가 여러 단어면 토큰 단위로 쪼개서, 파일명에 더 많은 토큰이 포함될수록 상위로 정렬한다
+    (정확한 파일명이 아니라 "이산수학 강의자료 같은거"처럼 구어체로 물어봐도 찾을 수 있게)."""
     base_dir = Path(base_dir)
     if not base_dir.exists():
         return []
 
     ext = _resolve_extension(query)
     if ext:
-        matches = (p for p in _iter_files(base_dir) if p.suffix.lower() == f".{ext}")
-    else:
-        q = query.strip().lower()
-        matches = (p for p in _iter_files(base_dir) if q in p.name.lower())
+        matches = sorted(str(p) for p in _iter_files(base_dir) if p.suffix.lower() == f".{ext}")
+        return matches
 
-    return sorted(str(p) for p in matches)
+    tokens = [t for t in query.strip().lower().split() if t not in _FILLER_TOKENS]
+    if not tokens:
+        return []
+
+    scored: list[tuple[int, Path]] = []
+    for p in _iter_files(base_dir):
+        name = p.name.lower()
+        score = sum(1 for t in tokens if t in name)
+        if score > 0:
+            scored.append((score, p))
+    scored.sort(key=lambda item: (-item[0], str(item[1])))
+    return [str(p) for _, p in scored]

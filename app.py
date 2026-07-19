@@ -299,11 +299,21 @@ def _handle_pdf_command(user_input: str) -> str | None:
 # ── 파일 검색 처리 ─────────────────────────────────────────────
 _MAX_FILE_SEARCH_RESULTS = 20  # 홈 디렉터리 전체 검색이라 결과가 많을 수 있어 상한 설정
 
+# "파일"이라는 단어 없이도("이산수학 강의자료 같은거 찾아줘") 트리거되도록,
+# 파일/문서 관련 단어가 하나라도 있으면 검색으로 인식 (없으면 일반 대화로 넘겨 오탐 방지)
+_FILE_SEARCH_ANCHORS = (
+    "파일", "자료", "강의자료", "강의노트", "문서", "보고서", "슬라이드",
+    "발표자료", "리포트", "ppt", "pdf", "hwp", "docx", "엑셀", "이미지", "사진",
+)
+
 def _handle_file_search_command(user_input: str) -> str | None:
-    """'OO 파일 찾아줘/검색해줘' 명령을 감지해서 로컬 파일 시스템에서 검색. 해당 없으면 None."""
-    match = re.search(r"(.+?)\s*파일\s*(?:찾아|검색해)", user_input.strip())
+    """'OO 파일/자료 찾아줘/검색해줘' 명령을 감지해서 로컬 파일 시스템에서 검색. 해당 없으면 None."""
+    text = user_input.strip()
+    match = re.search(r"(.+?)\s*(?:찾아|검색해)(?:줘|줄래|봐)?", text)
     if not match:
         return None
+    if not any(anchor in text for anchor in _FILE_SEARCH_ANCHORS):
+        return None  # 파일/문서 관련 단어 없으면 일반 대화로 넘김 (오탐 방지)
     query = match.group(1).strip()
     if not query:
         return None
@@ -342,6 +352,17 @@ def _handle_study_command(user_input: str) -> str | None:
 # ── 할 일 조회/완료/삭제 처리 ────────────────────────────────
 def _handle_todo_command(user_input: str) -> str | None:
     text = user_input.strip().replace("할일", "할 일")  # 붙여쓰기 정규화
+
+    # 할 일 추가 — "OO 할 일에 추가해줘" / "OO 투두에 추가해줘"
+    # LLM의 [TODO:] 태그 누락 시(응답에서 "추가했어"라고 말만 하고 실제 저장 안 되는 문제) 대비해
+    # 명시적 추가 요청은 태그에 의존하지 않고 직접 저장한다.
+    add_match = re.search(r"(.+?)(?:를|을)?\s*(?:할 일|투두)(?:에|로)?\s*추가", text)
+    if add_match:
+        task = add_match.group(1).strip()
+        if task:
+            due_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+            save_todo(task, due_match.group(1) if due_match else None)
+            return f"'{task}' 할 일에 추가했어!"
 
     # 할 일 조회
     if any(k in text for k in ("할 일 보여", "할 일 목록", "할 일 뭐야", "할 일 알려", "해야 할 거", "투두")):
@@ -513,7 +534,11 @@ with st.sidebar:
     st.title("🤖 JIVIS")
     st.divider()
 
-    uploaded_pdf = st.file_uploader("PDF 업로드", type=["pdf"])
+    st.session_state.setdefault("pdf_uploader_version", 0)
+    uploaded_pdf = st.file_uploader(
+        "PDF 업로드", type=["pdf"],
+        key=f"pdf_uploader_{st.session_state['pdf_uploader_version']}",
+    )
     if uploaded_pdf is not None:
         if st.session_state.get("pdf_filename") != uploaded_pdf.name:
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -534,6 +559,7 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.pop("pdf_context", None)
         st.session_state.pop("pdf_filename", None)
+        st.session_state["pdf_uploader_version"] += 1  # 위젯을 새로 만들어 업로드 상태까지 초기화
         clear_conversations()
         st.rerun()
 
