@@ -102,6 +102,16 @@ def load_recent_messages(limit: int = 20) -> list[dict]:
     ]
 
 
+def search_messages(keyword: str, limit: int = 5) -> list[dict]:
+    """대화 내용에 keyword가 포함된 메시지를 최신순으로 반환 — "OO 얘기 언제 했어?" 같은 질문용."""
+    with sqlite3.connect(_db_path()) as conn:
+        rows = conn.execute(
+            "SELECT role, content, timestamp FROM conversations WHERE content LIKE ? ORDER BY id DESC LIMIT ?",
+            (f"%{keyword}%", limit),
+        ).fetchall()
+    return [{"role": r, "content": c, "timestamp": ts} for r, c, ts in rows]
+
+
 def load_last_message_time() -> str | None:
     with sqlite3.connect(_db_path()) as conn:
         row = conn.execute(

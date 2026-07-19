@@ -18,6 +18,7 @@ from src.memory.database import (
     save_message,
     load_recent_messages,
     load_last_message_time,
+    search_messages,
     clear_conversations,
     save_note,
     get_notes,
@@ -291,6 +292,36 @@ def _handle_note_command(user_input: str) -> str | None:
     return None
 
 
+# ── 대화 시간 조회 처리 ───────────────────────────────────────
+def _handle_time_lookup_command(user_input: str) -> str | None:
+    """'마지막 대화 언제야?' / 'OO 얘기 언제 했어?' 같은 시간 조회 질문을 직접 처리. 해당 없으면 None."""
+    text = user_input.strip()
+    if "언제" not in text:
+        return None
+
+    # "마지막 대화/메시지가 언제야?"
+    if re.search(r"마지막\s*(?:대화|메시지|얘기)", text):
+        last_ts = load_last_message_time()
+        if not last_ts:
+            return "아직 저장된 대화 기록이 없어."
+        elapsed = format_elapsed(last_ts)
+        elapsed_note = f" ({elapsed} 전)" if elapsed else " (방금 전)"
+        return f"마지막 대화는 {last_ts}였어{elapsed_note}."
+
+    # "OO 얘기/대화 언제 했어?" — 대화 내용 검색
+    match = re.search(r"(.+?)\s*(?:얘기|대화|말)\s*(?:한|했)?\s*(?:거|건|게)?\s*언제", text)
+    if match:
+        keyword = match.group(1).strip()
+        if keyword:
+            found = search_messages(keyword, limit=3)
+            if not found:
+                return f"'{keyword}' 관련 대화 기록을 못 찾았어."
+            lines = "\n".join(f"- [{m['timestamp']}] {m['content'][:40]}" for m in found)
+            return f"'{keyword}' 관련 대화 기록이야:\n{lines}"
+
+    return None
+
+
 # ── PDF 요약 처리 ─────────────────────────────────────────────
 def _handle_pdf_command(user_input: str) -> str | None:
     """'PDF 요약해줘' 같은 요약 명령을 감지해서 summarize_pdf 호출. 해당 없으면 None."""
@@ -309,8 +340,9 @@ _MAX_FILE_SEARCH_RESULTS = 20  # 홈 디렉터리 전체 검색이라 결과가 
 # "파일"이라는 단어 없이도("이산수학 강의자료 같은거 찾아줘") 트리거되도록,
 # 파일/문서 관련 단어가 하나라도 있으면 검색으로 인식 (없으면 일반 대화로 넘겨 오탐 방지)
 _FILE_SEARCH_ANCHORS = (
-    "파일", "자료", "강의자료", "강의노트", "문서", "보고서", "슬라이드",
+    "파일", "폴더", "자료", "강의자료", "강의노트", "문서", "보고서", "슬라이드",
     "발표자료", "리포트", "ppt", "pdf", "hwp", "docx", "엑셀", "이미지", "사진",
+    "folder", "file", "image", "photo", "document",
 )
 
 def _handle_file_search_command(user_input: str) -> str | None:
@@ -319,7 +351,7 @@ def _handle_file_search_command(user_input: str) -> str | None:
     match = re.search(r"(.+?)\s*(?:찾아|검색해)(?:줘|줄래|봐)?", text)
     if not match:
         return None
-    if not any(anchor in text for anchor in _FILE_SEARCH_ANCHORS):
+    if not any(anchor in text.lower() for anchor in _FILE_SEARCH_ANCHORS):
         return None  # 파일/문서 관련 단어 없으면 일반 대화로 넘김 (오탐 방지)
     query = match.group(1).strip()
     if not query:
@@ -471,6 +503,10 @@ def responder(user_input: str, history: list[Message]) -> str:
     # 메모 명령어 우선 처리
     if reply is None:
         reply = _handle_note_command(user_input)
+
+    # 대화 시간 조회 처리
+    if reply is None:
+        reply = _handle_time_lookup_command(user_input)
 
     # PDF 요약 명령어 처리
     if reply is None:

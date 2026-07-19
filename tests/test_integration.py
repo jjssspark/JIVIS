@@ -14,6 +14,7 @@ from src.memory.database import (
     save_message,
     load_last_message_time,
     load_recent_messages,
+    search_messages,
 )
 from src.tools.pdf_reader import extract_text, chunk_text
 from src.agents.claude_ai import summarize_pdf
@@ -49,6 +50,24 @@ def test_load_recent_messages_includes_hhmm_time_for_chat_display():
     assert "time" in messages[0]
     now_hhmm = datetime.now().strftime("%H:%M")
     assert messages[0]["time"] == now_hhmm
+
+
+def test_search_messages_finds_by_content_keyword():
+    save_message("user", "이산수학 강의자료 어디 있어?")
+    save_message("assistant", "documents 폴더 확인해봐")
+    save_message("user", "오늘 날씨 어때")
+
+    found = search_messages("이산수학")
+
+    assert len(found) == 1
+    assert "이산수학" in found[0]["content"]
+    assert "timestamp" in found[0]
+
+
+def test_search_messages_returns_empty_when_no_match():
+    save_message("user", "안녕")
+
+    assert search_messages("존재하지않는키워드") == []
 
 
 def test_note_save_list_delete_roundtrip():

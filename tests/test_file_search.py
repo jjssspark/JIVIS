@@ -119,3 +119,23 @@ def test_search_files_ignores_filler_only_query(tmp_path):
 
     assert search_files("같은거", base_dir=tmp_path) == []
     assert search_files("강의자료 같은거", base_dir=tmp_path) == []
+
+
+def test_search_files_matches_folders_not_just_files(tmp_path):
+    image_folder = tmp_path / "image"
+    image_folder.mkdir()
+    (image_folder / "photo.png").write_text("x")
+
+    result = search_files("image", base_dir=tmp_path)
+
+    assert str(image_folder) in result
+
+
+def test_search_files_matches_name_glued_with_korean_particles(tmp_path):
+    # "image라는폴더가"처럼 한국어 조사가 영단어에 그대로 붙어도(공백 없이) 찾아야 함
+    image_folder = tmp_path / "image"
+    image_folder.mkdir()
+
+    result = search_files("그냥 폴더 이름중에 image라는폴더가 있어 그거", base_dir=tmp_path)
+
+    assert str(image_folder) in result
