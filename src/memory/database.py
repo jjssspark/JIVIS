@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 _DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "jivis.db"
@@ -79,10 +80,13 @@ def load_all_memory() -> dict:
 
 
 def save_message(role: str, content: str) -> None:
+    # SQLite의 CURRENT_TIMESTAMP는 UTC라 로컬 시간(KST 등)과 몇 시간씩 어긋나서
+    # "경과 시간" 계산이 틀어진다 — 여기서 로컬 시간을 명시적으로 넣는다.
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(_db_path()) as conn:
         conn.execute(
-            "INSERT INTO conversations (role, content) VALUES (?, ?)",
-            (role, content),
+            "INSERT INTO conversations (role, content, timestamp) VALUES (?, ?, ?)",
+            (role, content, now),
         )
 
 

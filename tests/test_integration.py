@@ -1,4 +1,5 @@
 """Day10 통합 테스트 — 메모/할일/PDF/파일검색을 실제 jivis.db와 분리된 임시 DB에서 검증."""
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 import pytest
 from src.memory.database import (
@@ -10,6 +11,8 @@ from src.memory.database import (
     get_todos,
     done_todo,
     clear_done_todos,
+    save_message,
+    load_last_message_time,
 )
 from src.tools.pdf_reader import extract_text, chunk_text
 from src.agents.claude_ai import summarize_pdf
@@ -23,6 +26,16 @@ def isolated_db(tmp_path, monkeypatch):
     """각 테스트마다 실제 jivis.db 대신 임시 DB 파일을 쓰도록 격리."""
     monkeypatch.setenv("JIVIS_DB_PATH", str(tmp_path / "test_jivis.db"))
     init_db()
+
+
+def test_save_message_stores_local_time_not_utc():
+    before = datetime.now()
+
+    save_message("user", "안녕")
+
+    stored = datetime.strptime(load_last_message_time(), "%Y-%m-%d %H:%M:%S")
+    # SQLite CURRENT_TIMESTAMP는 UTC라 로컬(KST 등)과 몇 시간씩 어긋난다 — 로컬 기준 몇 초 이내여야 정상
+    assert abs((stored - before).total_seconds()) < 5
 
 
 def test_note_save_list_delete_roundtrip():

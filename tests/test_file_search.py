@@ -90,25 +90,32 @@ def test_default_base_dir_is_home_directory():
     assert file_search.HOME_DIR == Path.home()
 
 
-def test_search_files_matches_any_token_ranked_by_match_count(tmp_path):
-    both = tmp_path / "이산수학_강의자료.pdf"
-    both.write_text("x")
-    one = tmp_path / "이산수학_사진.png"
-    one.write_text("x")
-    other = tmp_path / "영어_강의자료.pdf"
-    other.write_text("x")
-    unrelated = tmp_path / "장보기_목록.txt"
-    unrelated.write_text("x")
+def test_search_files_ignores_generic_document_words_when_scoring(tmp_path):
+    # "강의자료"는 흔한 단어라 무관한 파일까지 끌어오면 안 됨 — 실제 내용어(이산수학)만으로 매칭
+    correct = tmp_path / "이산수학_1주차.pdf"
+    correct.write_text("x")
+    wrong = tmp_path / "컴퓨터공학특론_강의자료.pdf"
+    wrong.write_text("x")
 
     result = search_files("이산수학 강의자료 같은거", base_dir=tmp_path)
 
-    assert result[0] == str(both)  # 토큰 2개 다 매칭 → 1순위
-    assert str(one) in result
-    assert str(other) in result
-    assert str(unrelated) not in result
+    assert result == [str(correct)]
+
+
+def test_search_files_ranks_more_specific_token_matches_first(tmp_path):
+    two_tokens = tmp_path / "이산수학_기말고사.pdf"
+    two_tokens.write_text("x")
+    one_token = tmp_path / "이산수학_사진.png"
+    one_token.write_text("x")
+
+    result = search_files("이산수학 기말고사", base_dir=tmp_path)
+
+    assert result[0] == str(two_tokens)  # 토큰 2개 다 매칭 → 1순위
+    assert str(one_token) in result
 
 
 def test_search_files_ignores_filler_only_query(tmp_path):
     (tmp_path / "a.txt").write_text("x")
 
     assert search_files("같은거", base_dir=tmp_path) == []
+    assert search_files("강의자료 같은거", base_dir=tmp_path) == []
