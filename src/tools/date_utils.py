@@ -39,3 +39,22 @@ def get_date_context() -> str:
         lines.append(f"- {kr}요일: {d}")
 
     return "\n".join(lines)
+
+
+def format_elapsed(last_ts: str | None, now: datetime | None = None) -> str:
+    """마지막 메시지 시각("YYYY-MM-DD HH:MM:SS", 로컬시간) 기준 경과 시간을 한국어로 반환.
+    정보가 없거나 1분 미만이면 빈 문자열."""
+    if not last_ts:
+        return ""
+    try:
+        last_dt = datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return ""
+    now = now or datetime.now()
+    total_min = int((now - last_dt).total_seconds() / 60)
+    if total_min < 1:
+        return ""
+    if total_min < 60:
+        return f"{total_min}분"
+    h, m = divmod(total_min, 60)
+    return f"{h}시간" if m == 0 else f"{h}시간 {m}분"

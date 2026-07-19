@@ -93,10 +93,13 @@ def save_message(role: str, content: str) -> None:
 def load_recent_messages(limit: int = 20) -> list[dict]:
     with sqlite3.connect(_db_path()) as conn:
         rows = conn.execute(
-            "SELECT role, content FROM conversations ORDER BY id DESC LIMIT ?",
+            "SELECT role, content, timestamp FROM conversations ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
-    return [{"role": r, "content": c} for r, c in reversed(rows)]
+    return [
+        {"role": r, "content": c, "time": ts[11:16] if ts else ""}
+        for r, c, ts in reversed(rows)
+    ]
 
 
 def load_last_message_time() -> str | None:

@@ -1,5 +1,6 @@
-import streamlit as st
+from datetime import datetime
 from typing import Callable
+import streamlit as st
 
 Message = dict[str, str]
 ResponseHandler = Callable[[str, list[Message]], str]
@@ -65,6 +66,11 @@ header[data-testid="stHeader"] {
     color: #2c2c2c;
     margin-bottom: 4px;
 }
+.msg-time {
+    font-size: 11px;
+    color: rgba(0,0,0,0.55);
+    margin-top: 3px;
+}
 .avatar-box {
     width: 42px;
     height: 42px;
@@ -105,6 +111,8 @@ def _render_message(msg: Message, jivis_name: str) -> None:
         .replace(">", "&gt;")
     )
 
+    time_str = msg.get("time", "")
+
     if msg["role"] == "assistant":
         # 왼쪽: 아바타 | 이름 + 말풍선
         col_avatar, col_bubble, col_empty = st.columns([0.08, 0.55, 0.37])
@@ -114,18 +122,22 @@ def _render_message(msg: Message, jivis_name: str) -> None:
                 unsafe_allow_html=True,
             )
         with col_bubble:
+            time_html = f'<div class="msg-time">{time_str}</div>' if time_str else ""
             st.markdown(
                 f'<div class="sender-name">{jivis_name}</div>'
-                f'<div class="jivis-bubble">{content}</div>',
+                f'<div class="jivis-bubble">{content}</div>'
+                f"{time_html}",
                 unsafe_allow_html=True,
             )
     else:
         # 오른쪽: 빈공간 | 말풍선
         col_empty, col_bubble = st.columns([0.37, 0.63])
         with col_bubble:
+            time_html = f'<div class="msg-time" style="text-align:right">{time_str}</div>' if time_str else ""
             st.markdown(
                 f'<div style="text-align:right">'
                 f'<div class="user-bubble" style="text-align:left">{content}</div>'
+                f"{time_html}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -153,10 +165,14 @@ def render_chat(on_message: ResponseHandler) -> None:
     _render_history()
 
     if prompt := st.chat_input("메시지를 입력하세요..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.messages.append(
+            {"role": "user", "content": prompt, "time": datetime.now().strftime("%H:%M")}
+        )
 
         with st.spinner(""):
             response = on_message(prompt, st.session_state.messages[:-1])
 
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.session_state.messages.append(
+            {"role": "assistant", "content": response, "time": datetime.now().strftime("%H:%M")}
+        )
         st.rerun()

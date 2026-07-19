@@ -13,6 +13,7 @@ from src.memory.database import (
     clear_done_todos,
     save_message,
     load_last_message_time,
+    load_recent_messages,
 )
 from src.tools.pdf_reader import extract_text, chunk_text
 from src.agents.claude_ai import summarize_pdf
@@ -36,6 +37,18 @@ def test_save_message_stores_local_time_not_utc():
     stored = datetime.strptime(load_last_message_time(), "%Y-%m-%d %H:%M:%S")
     # SQLite CURRENT_TIMESTAMP는 UTC라 로컬(KST 등)과 몇 시간씩 어긋난다 — 로컬 기준 몇 초 이내여야 정상
     assert abs((stored - before).total_seconds()) < 5
+
+
+def test_load_recent_messages_includes_hhmm_time_for_chat_display():
+    save_message("user", "안녕")
+
+    messages = load_recent_messages(limit=5)
+
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    assert "time" in messages[0]
+    now_hhmm = datetime.now().strftime("%H:%M")
+    assert messages[0]["time"] == now_hhmm
 
 
 def test_note_save_list_delete_roundtrip():

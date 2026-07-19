@@ -35,7 +35,7 @@ from src.tools.mac_notes import (
     update_note as mac_update,
     delete_note_by_title as mac_delete,
 )
-from src.tools.date_utils import get_date_context
+from src.tools.date_utils import get_date_context, format_elapsed
 from src.memory.emotion import get_emotion_prompt
 
 st.set_page_config(page_title="JIVIS", page_icon="🤖", layout="wide")
@@ -52,7 +52,7 @@ _LABEL_MAP = {
 
 
 # ── 시스템 프롬프트 ────────────────────────────────────────────
-def _build_system(user_input: str = "") -> str:
+def _build_system(user_input: str = "", elapsed: str = "") -> str:
     user = st.session_state["user_name"]
     jivis = st.session_state["jivis_name"]
     mode = st.session_state.get("mode", "친구")
@@ -107,11 +107,13 @@ def _build_system(user_input: str = "") -> str:
         period = "밤"
     weekdays = ["월", "화", "수", "목", "금", "토", "일"]
     weekday = weekdays[now.weekday()]
+    elapsed_note = f" 마지막 대화로부터 {elapsed}이 지났어." if elapsed else ""
     time_section = (
         f"\n[현재 날짜/시간]\n"
         f"오늘은 {now.strftime('%Y년 %m월 %d일')} ({weekday}요일), "
-        f"지금은 {now.strftime('%H:%M')} ({period})이야. "
-        f"대화 흐름상 자연스러우면 날짜/시간대를 반영해도 돼."
+        f"지금은 {now.strftime('%H:%M')} ({period})이야.{elapsed_note} "
+        f"대화 흐름상 자연스러우면 날짜/시간대를 반영해도 돼. "
+        f"경과 시간을 물어보면 위 정보를 근거로 정확히 답해 — 모른다고 하지 마."
     )
 
     # 할 일 컨텍스트 (전체 미완료 목록 + 기한 초과)
@@ -178,6 +180,11 @@ def _build_system(user_input: str = "") -> str:
   "해야 해", "할 일 추가해줘", "~하기로 했어" 감지 시 붙여.
   날짜 표현이 있으면 YYYY-MM-DD로 변환해서 붙여.
   예) [TODO:파이썬 공부 2시간:2026-07-09]
+  주의: 이 태그를 실제로 붙여야만 진짜 저장됨 — "추가했어"라고 말만 하고 태그를 빠뜨리면
+  아무 일도 안 일어나니 절대 태그 없이 "추가했어"라고 답하지 마.
+  날짜를 물어봤는데 사용자가 "오늘로", "응", "어" 같은 짧은 대답으로 확인해주면,
+  직전에 물어본 그 할 일 내용에 오늘 날짜를 붙여 바로 [TODO:] 태그를 완성해 —
+  다시 되묻지 말고 그 자리에서 확정해.
 - 할 일 완료: [DONE:id]
   "완료했어", "다 했어", "끝냈어" 감지 시 해당 id 붙여.
   예) [DONE:1]
@@ -320,13 +327,20 @@ def _handle_file_search_command(user_input: str) -> str | None:
     results = search_files(query)
     if not results:
         return f"'{query}' 관련 파일을 못 찾았어."
-    subprocess.Popen(["open", "-R", results[0]])  # Finder에서 첫 번째 결과 위치를 바로 열어줌
+
+    # Finder에서 첫 번째 결과 위치를 열어줌 — 실패해도 조용히 넘기지 않고 응답에 그대로 드러냄
+    try:
+        opened = subprocess.run(["open", "-R", results[0]], capture_output=True, text=True, timeout=5)
+        finder_note = "Finder에서 첫 번째 파일 위치 열었어" if opened.returncode == 0 else f"Finder 열기 실패({opened.stderr.strip()})"
+    except Exception as e:
+        finder_note = f"Finder 열기 실패({e})"
+
     home = str(Path.home())
     shown = [p.replace(home, "~") for p in results[:_MAX_FILE_SEARCH_RESULTS]]
     lines = "\n".join(f"- {p}" for p in shown)
     more = len(results) - len(shown)
     suffix = f"\n...외 {more}개 더 있어" if more > 0 else ""
-    return f"'{query}' 검색 결과 ({len(results)}개), Finder에서 첫 번째 파일 위치 열었어:\n{lines}{suffix}"
+    return f"'{query}' 검색 결과 ({len(results)}개), {finder_note}:\n{lines}{suffix}"
 
 
 # ── 공부 플래너 처리 ──────────────────────────────────────────
@@ -443,48 +457,48 @@ def _open_todo_window() -> None:
 
 # ── 대화 처리 ─────────────────────────────────────────────────
 def responder(user_input: str, history: list[Message]) -> str:
+    # 이번 사용자 메시지를 저장하기 전에 경과 시간부터 계산 (안 그러면 방금 저장한
+    # 메시지 자신의 시각과 비교하게 돼서 항상 "0분"이 됨)
+    elapsed = format_elapsed(load_last_message_time())
     save_message("user", user_input)
 
+    reply: str | None = None
+    raw = ""
+
     # 공부 플래너 — 메모리 없으면 먼저 안내
-    study_reply = _handle_study_command(user_input)
-    if study_reply:
-        save_message("assistant", study_reply)
-        return study_reply
+    reply = _handle_study_command(user_input)
 
     # 메모 명령어 우선 처리
-    note_reply = _handle_note_command(user_input)
-    if note_reply:
-        save_message("assistant", note_reply)
-        return note_reply
+    if reply is None:
+        reply = _handle_note_command(user_input)
 
     # PDF 요약 명령어 처리
-    pdf_reply = _handle_pdf_command(user_input)
-    if pdf_reply:
-        save_message("assistant", pdf_reply)
-        return pdf_reply
+    if reply is None:
+        reply = _handle_pdf_command(user_input)
 
     # 파일 검색 명령어 처리
-    file_reply = _handle_file_search_command(user_input)
-    if file_reply:
-        save_message("assistant", file_reply)
-        return file_reply
-
-    # 할 일 관련 키워드 감지 → 앱 자동 오픈 (할 일 명령 처리 전에)
-    normalized = user_input.replace("할일", "할 일")
-    if any(k in normalized for k in _TODO_KEYWORDS):
-        _open_todo_window()
+    if reply is None:
+        reply = _handle_file_search_command(user_input)
 
     # 할 일 명령어 처리
-    todo_reply = _handle_todo_command(user_input)
-    if todo_reply:
-        save_message("assistant", todo_reply)
-        return todo_reply
+    if reply is None:
+        reply = _handle_todo_command(user_input)
 
-    raw = get_response(user_input, history, system=_build_system(user_input))
-    reply = _parse_and_update(raw)
-    # AI 응답에 [TODO:] 또는 [DONE:] 태그 있으면 창 열기
-    if "[TODO:" in raw or "[DONE:" in raw:
+    # 나머지는 일반 대화 (질의응답 포함)
+    if reply is None:
+        raw = get_response(user_input, history, system=_build_system(user_input, elapsed))
+        reply = _parse_and_update(raw)
+
+    # 할 일 관련 대화면(사용자 입력이든 JIVIS 응답이든) 무조건 할 일 창 열기
+    normalized_input = user_input.replace("할일", "할 일")
+    if (
+        any(k in normalized_input for k in _TODO_KEYWORDS)
+        or any(k in reply for k in _TODO_KEYWORDS)
+        or "[TODO:" in raw
+        or "[DONE:" in raw
+    ):
         _open_todo_window()
+
     save_message("assistant", reply)
     return reply
 
@@ -501,33 +515,18 @@ if "memory_loaded" not in st.session_state:
     if last_msgs:
         st.session_state["messages"] = list(last_msgs)
 
-        elapsed_str = ""
-        last_ts = load_last_message_time()
-        if last_ts:
-            try:
-                last_dt = datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")
-                diff = datetime.now() - last_dt
-                total_min = int(diff.total_seconds() / 60)
-                if total_min < 1:
-                    elapsed_str = ""
-                elif total_min < 60:
-                    elapsed_str = f"{total_min}분"
-                else:
-                    h, m = divmod(total_min, 60)
-                    elapsed_str = f"{h}시간" if m == 0 else f"{h}시간 {m}분"
-            except ValueError:
-                pass
+        elapsed_str = format_elapsed(load_last_message_time())
 
         now = datetime.now()
         greeting = generate_greeting(
             last_msgs,
-            system=_build_system(),
+            system=_build_system(elapsed=elapsed_str),
             elapsed=elapsed_str,
             current_time=now.strftime("%H:%M"),
         )
         if greeting:
             st.session_state["messages"].append(
-                {"role": "assistant", "content": greeting}
+                {"role": "assistant", "content": greeting, "time": now.strftime("%H:%M")}
             )
 
 # ── 사이드바 ───────────────────────────────────────────────────
@@ -564,7 +563,8 @@ with st.sidebar:
         clear_conversations()
         fresh_greeting = generate_fresh_greeting(system=_build_system())
         if fresh_greeting:
-            st.session_state.messages = [{"role": "assistant", "content": fresh_greeting}]
+            now_str = datetime.now().strftime("%H:%M")
+            st.session_state.messages = [{"role": "assistant", "content": fresh_greeting, "time": now_str}]
             save_message("assistant", fresh_greeting)
         st.rerun()
 
