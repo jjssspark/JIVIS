@@ -55,6 +55,24 @@ def generate_greeting(
         return None
 
 
+def generate_fresh_greeting(system: str = "") -> str | None:
+    """대화 초기화 직후, 이전 맥락 없이 JIVIS가 먼저 건네는 인사."""
+    prompt = (
+        "방금 사용자가 대화를 초기화했어. 이전 대화 기록은 없고 완전히 새로 시작하는 상황이야."
+        " 짧게 인사하고 자연스럽게 말을 걸어줘. 한두 문장, 메타 태그 붙이지 마."
+    )
+    try:
+        response = _client.messages.create(
+            model=MODEL_ID,
+            max_tokens=150,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
+    except Exception:
+        return None
+
+
 def summarize_pdf(chunks: list[str], persona: str = "") -> str:
     """PDF 텍스트 청크를 Claude에 전달해 3~5줄 요약을 생성한다."""
     text = "\n".join(chunks)[:PDF_SUMMARY_CHAR_LIMIT]

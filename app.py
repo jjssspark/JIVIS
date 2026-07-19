@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 import streamlit as st
 from src.ui.chat import render_chat, Message
-from src.agents.claude_ai import get_response, generate_greeting, summarize_pdf
+from src.agents.claude_ai import get_response, generate_greeting, generate_fresh_greeting, summarize_pdf
 from src.agents.persona import get_persona_prompt
 from src.memory.memory import load, save
 from src.tools.pdf_reader import extract_text, chunk_text
@@ -320,12 +320,13 @@ def _handle_file_search_command(user_input: str) -> str | None:
     results = search_files(query)
     if not results:
         return f"'{query}' 관련 파일을 못 찾았어."
+    subprocess.Popen(["open", "-R", results[0]])  # Finder에서 첫 번째 결과 위치를 바로 열어줌
     home = str(Path.home())
     shown = [p.replace(home, "~") for p in results[:_MAX_FILE_SEARCH_RESULTS]]
     lines = "\n".join(f"- {p}" for p in shown)
     more = len(results) - len(shown)
     suffix = f"\n...외 {more}개 더 있어" if more > 0 else ""
-    return f"'{query}' 검색 결과 ({len(results)}개):\n{lines}{suffix}"
+    return f"'{query}' 검색 결과 ({len(results)}개), Finder에서 첫 번째 파일 위치 열었어:\n{lines}{suffix}"
 
 
 # ── 공부 플래너 처리 ──────────────────────────────────────────
@@ -561,6 +562,10 @@ with st.sidebar:
         st.session_state.pop("pdf_filename", None)
         st.session_state["pdf_uploader_version"] += 1  # 위젯을 새로 만들어 업로드 상태까지 초기화
         clear_conversations()
+        fresh_greeting = generate_fresh_greeting(system=_build_system())
+        if fresh_greeting:
+            st.session_state.messages = [{"role": "assistant", "content": fresh_greeting}]
+            save_message("assistant", fresh_greeting)
         st.rerun()
 
 

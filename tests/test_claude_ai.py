@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from src.agents.claude_ai import summarize_pdf, PDF_SUMMARY_CHAR_LIMIT
+from src.agents.claude_ai import summarize_pdf, PDF_SUMMARY_CHAR_LIMIT, generate_fresh_greeting
 
 
 def _mock_response(text: str) -> MagicMock:
@@ -46,3 +46,28 @@ def test_summarize_pdf_returns_friendly_message_on_error(mock_client):
     result = summarize_pdf(["청크"])
 
     assert "오류" in result
+
+
+@patch("src.agents.claude_ai._client")
+def test_generate_fresh_greeting_returns_claude_response(mock_client):
+    mock_client.messages.create.return_value = _mock_response("안녕! 새로 시작이네")
+
+    result = generate_fresh_greeting()
+
+    assert result == "안녕! 새로 시작이네"
+
+
+@patch("src.agents.claude_ai._client")
+def test_generate_fresh_greeting_passes_system_persona(mock_client):
+    mock_client.messages.create.return_value = _mock_response("안녕")
+
+    generate_fresh_greeting(system="너는 JIVIS야")
+
+    assert mock_client.messages.create.call_args.kwargs["system"] == "너는 JIVIS야"
+
+
+@patch("src.agents.claude_ai._client")
+def test_generate_fresh_greeting_returns_none_on_error(mock_client):
+    mock_client.messages.create.side_effect = Exception("boom")
+
+    assert generate_fresh_greeting() is None
