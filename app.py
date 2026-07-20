@@ -591,6 +591,35 @@ with st.sidebar:
 
     st.divider()
 
+    # ── 음성 입력 (Day 11 STT) ──────────────────────────────────
+    st.markdown("**🎙️ 음성 입력**")
+    stt_duration = st.slider("녹음 시간(초)", 3, 10, 5, key="stt_duration")
+    if st.button("🎙️ 녹음 시작", use_container_width=True):
+        try:
+            from src.tools.stt import record_and_transcribe
+            with st.spinner("🎙️ 녹음 중..."):
+                text = record_and_transcribe(duration=stt_duration)
+            if text:
+                st.session_state["voice_input"] = text
+                st.success(f"인식 결과: {text}")
+            else:
+                st.warning("음성을 인식하지 못했어요.")
+        except Exception as e:
+            st.error(f"STT 오류: {e}")
+
+    if st.session_state.get("voice_input"):
+        voice_text = st.session_state["voice_input"]
+        if st.button(f"💬 '{voice_text[:20]}...' 전송", use_container_width=True):
+            if "messages" not in st.session_state:
+                st.session_state["messages"] = []
+            st.session_state["messages"].append({"role": "user", "content": voice_text})
+            reply = responder(voice_text, st.session_state["messages"])
+            st.session_state["messages"].append({"role": "assistant", "content": reply})
+            st.session_state.pop("voice_input", None)
+            st.rerun()
+
+    st.divider()
+
     if st.button("대화 초기화"):
         st.session_state.messages = []
         st.session_state.pop("pdf_context", None)
