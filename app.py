@@ -593,19 +593,54 @@ with st.sidebar:
 
     # ── 음성 입력 (Day 11 STT) ──────────────────────────────────
     st.markdown("**🎙️ 음성 입력**")
-    stt_duration = st.slider("녹음 시간(초)", 3, 10, 5, key="stt_duration")
-    if st.button("🎙️ 녹음 시작", use_container_width=True):
-        try:
-            from src.tools.stt import record_and_transcribe
-            with st.spinner("🎙️ 녹음 중..."):
-                text = record_and_transcribe(duration=stt_duration)
-            if text:
-                st.session_state["voice_input"] = text
-                st.success(f"인식 결과: {text}")
-            else:
-                st.warning("음성을 인식하지 못했어요.")
-        except Exception as e:
-            st.error(f"STT 오류: {e}")
+    stt_state = st.session_state.get("stt_state", "idle")  # idle | recording | stopped
+
+    if stt_state == "idle":
+        if st.button("🎙️ 녹음 시작", use_container_width=True, type="primary"):
+            try:
+                from src.tools.stt import start_stream
+                stream, frames = start_stream()
+                st.session_state["stt_stream"] = stream
+                st.session_state["stt_frames"] = frames
+                st.session_state["stt_state"] = "recording"
+                st.rerun()
+            except Exception as e:
+                st.error(f"STT 오류: {e}")
+
+    elif stt_state == "recording":
+        st.info("🔴 녹음 중...")
+        if st.button("⏹️ 녹음 중지", use_container_width=True, type="primary"):
+            from src.tools.stt import stop_stream
+            stop_stream(st.session_state["stt_stream"])
+            st.session_state["stt_state"] = "stopped"
+            st.rerun()
+
+    elif stt_state == "stopped":
+        col_done, col_retry = st.columns(2)
+        with col_done:
+            if st.button("✅ 녹음 완료", use_container_width=True, type="primary"):
+                from src.tools.stt import save_frames_to_wav, transcribe
+                try:
+                    with st.spinner("텍스트 변환 중..."):
+                        wav_path = save_frames_to_wav(st.session_state["stt_frames"])
+                        text = transcribe(wav_path)
+                    if text:
+                        st.session_state["voice_input"] = text
+                        st.success(f"인식 결과: {text}")
+                    else:
+                        st.warning("음성을 인식하지 못했어요.")
+                except Exception as e:
+                    st.error(f"STT 오류: {e}")
+                finally:
+                    st.session_state["stt_state"] = "idle"
+                    st.session_state.pop("stt_stream", None)
+                    st.session_state.pop("stt_frames", None)
+        with col_retry:
+            if st.button("🔄 다시 녹음", use_container_width=True):
+                st.session_state["stt_state"] = "idle"
+                st.session_state.pop("stt_stream", None)
+                st.session_state.pop("stt_frames", None)
+                st.rerun()
 
     if st.session_state.get("voice_input"):
         voice_text = st.session_state["voice_input"]
