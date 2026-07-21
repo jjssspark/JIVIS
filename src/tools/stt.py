@@ -1,7 +1,34 @@
 """STT — 마이크 녹음 + Whisper 음성 인식 (Day 11)"""
 import os
 import tempfile
+import threading
 import numpy as np
+
+_model = None
+_model_lock = threading.Lock()
+
+
+def _get_model(model_size: str = "small"):
+    """Whisper 모델을 최초 1회만 로딩해 재사용. 매번 새로 만들면 변환할 때마다
+    모델 로딩 시간이 그대로 추가돼 체감 속도가 크게 느려진다.
+    local_files_only=True로 고정 — 캐시된 모델이 있어도 매번 허깅페이스 허브에
+    갱신 여부를 확인하러 네트워크를 타면서 응답이 20초 이상 멈추는 원인이 됐다."""
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                from faster_whisper import WhisperModel
+                _model = WhisperModel(
+                    model_size, device="cpu", compute_type="int8", local_files_only=True
+                )
+    return _model
+
+
+def warm_up_model(model_size: str = "small") -> None:
+    """앱 시작 시 한 번 동기 호출 — 첫 녹음 완료 시점에 모델을 새로 로딩하느라
+    발생하는 대기 시간을 없앤다. (백그라운드 스레드로 돌리면 모델 로딩이 CPU를
+    많이 써서 메인 스레드의 버튼 클릭 처리가 멈춘 것처럼 보이는 문제가 있었음)"""
+    _get_model(model_size)
 
 
 def start_stream(samplerate: int = 16000):
@@ -24,8 +51,9 @@ def start_stream(samplerate: int = 16000):
 
 
 def stop_stream(stream) -> None:
-    """녹음 스트림 중지 및 해제."""
-    stream.stop()
+    """녹음 스트림 중지 및 해제. abort()는 남은 버퍼 처리를 기다리지 않고
+    즉시 중단해 stop()보다 멈춤 없이 빠르게 반환된다."""
+    stream.abort()
     stream.close()
 
 
@@ -61,9 +89,7 @@ def record_audio(duration: int = 5, samplerate: int = 16000) -> str:
 
 def transcribe(audio_path: str, model_size: str = "small") -> str:
     """WAV 파일을 Whisper로 텍스트 변환. 한국어 고정 + VAD로 무음/잡음 구간 제거."""
-    from faster_whisper import WhisperModel
-
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    model = _get_model(model_size)
     segments, info = model.transcribe(
         audio_path,
         language="ko",

@@ -547,6 +547,14 @@ if "memory_loaded" not in st.session_state:
     st.session_state.setdefault("mode", "친구")
     st.session_state["memory_loaded"] = True
 
+    # STT 모델을 세션당 한 번만, 앱 시작 시점에 미리 로딩 — 녹음 시작 버튼에서
+    # 백그라운드 스레드로 로딩하면 CPU 경합으로 버튼 클릭 처리가 멈추는 문제가 있었음.
+    try:
+        from src.tools.stt import warm_up_model
+        warm_up_model()
+    except Exception:
+        pass  # 실패해도 앱 시작엔 지장 없음 — 실제 녹음 시도 시 오류가 다시 표시됨
+
     last_msgs = load_recent_messages(limit=20)
     if last_msgs:
         st.session_state["messages"] = list(last_msgs)
@@ -621,9 +629,12 @@ with st.sidebar:
             if st.button("✅ 녹음 완료", use_container_width=True, type="primary"):
                 from src.tools.stt import save_frames_to_wav, transcribe
                 try:
-                    with st.spinner("텍스트 변환 중..."):
+                    with st.status("🧠 음성 인식 처리 중...", expanded=True) as status:
+                        st.write("오디오 저장 중...")
                         wav_path = save_frames_to_wav(st.session_state["stt_frames"])
+                        st.write("텍스트 변환 중...")
                         text = transcribe(wav_path)
+                        status.update(label="✅ 변환 완료", state="complete")
                     if text:
                         st.session_state["voice_input"] = text
                         st.success(f"인식 결과: {text}")
@@ -642,16 +653,31 @@ with st.sidebar:
                 st.session_state.pop("stt_frames", None)
                 st.rerun()
 
-    if st.session_state.get("voice_input"):
-        voice_text = st.session_state["voice_input"]
-        if st.button(f"💬 '{voice_text[:20]}...' 전송", use_container_width=True):
-            if "messages" not in st.session_state:
-                st.session_state["messages"] = []
-            st.session_state["messages"].append({"role": "user", "content": voice_text})
-            reply = responder(voice_text, st.session_state["messages"])
-            st.session_state["messages"].append({"role": "assistant", "content": reply})
-            st.session_state.pop("voice_input", None)
-            st.rerun()
+    # 인식 결과를 입력창에 자동으로 채워서 전송 전 수정 가능하게 함 (Day 12)
+    if st.session_state.get("voice_input") is not None:
+        voice_version = st.session_state.get("voice_input_version", 0)
+        voice_key = f"voice_input_box_{voice_version}"
+        if voice_key not in st.session_state:
+            st.session_state[voice_key] = st.session_state["voice_input"]
+        edited_text = st.text_input("인식된 텍스트 (수정 가능)", key=voice_key)
+
+        col_send, col_cancel = st.columns(2)
+        with col_send:
+            if st.button("💬 전송", use_container_width=True, type="primary"):
+                if edited_text.strip():
+                    if "messages" not in st.session_state:
+                        st.session_state["messages"] = []
+                    st.session_state["messages"].append({"role": "user", "content": edited_text})
+                    reply = responder(edited_text, st.session_state["messages"])
+                    st.session_state["messages"].append({"role": "assistant", "content": reply})
+                st.session_state.pop("voice_input", None)
+                st.session_state["voice_input_version"] = voice_version + 1
+                st.rerun()
+        with col_cancel:
+            if st.button("취소", use_container_width=True):
+                st.session_state.pop("voice_input", None)
+                st.session_state["voice_input_version"] = voice_version + 1
+                st.rerun()
 
     st.divider()
 
