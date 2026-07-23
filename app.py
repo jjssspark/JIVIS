@@ -2,6 +2,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 import streamlit as st
@@ -11,6 +12,7 @@ from src.agents.persona import get_persona_prompt
 from src.memory.memory import load, save
 from src.tools.pdf_reader import extract_text, chunk_text
 from src.tools.file_search import search_files
+from src.tools.tts import speak
 from src.memory.database import (
     init_db,
     save_memory,
@@ -487,6 +489,13 @@ def _open_todo_window() -> None:
         subprocess.Popen([sys.executable, todo_script])
 
 
+def _speak_async(text: str) -> None:
+    """백그라운드 스레드에서 TTS 재생 — afplay가 메인 스레드를 막지 않게 함."""
+    if not text.strip():
+        return
+    threading.Thread(target=speak, args=(text,), daemon=True).start()
+
+
 # ── 대화 처리 ─────────────────────────────────────────────────
 def responder(user_input: str, history: list[Message]) -> str:
     # 이번 사용자 메시지를 저장하기 전에 경과 시간부터 계산 (안 그러면 방금 저장한
@@ -535,6 +544,9 @@ def responder(user_input: str, history: list[Message]) -> str:
     ):
         _open_todo_window()
 
+    if st.session_state.get("tts_on", True):
+        _speak_async(reply)
+
     save_message("assistant", reply)
     return reply
 
@@ -576,6 +588,11 @@ if "memory_loaded" not in st.session_state:
 # ── 사이드바 ───────────────────────────────────────────────────
 with st.sidebar:
     st.title("🤖 JIVIS")
+    st.divider()
+
+    st.session_state.setdefault("tts_on", True)
+    st.toggle("🔊 음성 응답", key="tts_on")
+
     st.divider()
 
     st.session_state.setdefault("pdf_uploader_version", 0)
